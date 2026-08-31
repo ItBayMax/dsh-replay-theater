@@ -10,8 +10,15 @@
  *
  * | | storage line (this module's input) | client wire record |
  * |---|---|---|
- * | packed | `{ type: 'text-chunks', … }` | `{ type: 'chunks', event: { type: 'chunkrow/text-chunks', … } }` |
- * | scalar | the event itself | `{ type: 'event', event }` |
+ * | packed | `{ type: 'text-chunks', seq0, time0, data }` | `{ type: 'chunks', event: { type: 'chunkrow/text-chunks', seq, time, data } }` |
+ * | scalar | the event itself, with `seq`/`time` | `{ type: 'event', event }` |
+ *
+ * The `seq0`/`time0` naming of a packed storage row is easy to miss and was
+ * verified against a real 5777-line production log: 2455 of its rows are packed
+ * and carry `seq0`/`time0`, 1267 are scalar and carry `seq`/`time`, and the
+ * first line is a `SessionHeader` (`{type:'session', version, id, createdAt,
+ * cwd, …}`) with NEITHER — it is session metadata, not an event, so it must not
+ * consume a sequence.
  *
  * Upstream's own decoder for the storage form is `decodeStorageRecord`
  * (packages/core/session/src/chunk-rows.ts:363); this module performs the
@@ -33,6 +40,11 @@ export interface ParsedLog {
   readonly records: readonly HistoryRecord[]
   /** Lines that were not usable, with 1-based line numbers, for honest reporting. */
   readonly skipped: readonly { readonly line: number; readonly reason: string }[]
+  /**
+   * The log's `SessionHeader` line when present. It is session metadata rather
+   * than an event (no `seq`, no `time`), so it stays out of `records`.
+   */
+  readonly header?: Record<string, unknown>
 }
 
 /**
@@ -77,8 +89,14 @@ function liftPacked(
     index: typeof data['index'] === 'number' ? data['index'] : 0,
     dt,
   }
-  const resolvedSeq = typeof value['seq'] === 'number' ? value['seq'] : seq
-  const time = typeof value['time'] === 'number' ? value['time'] : 0
+  // Packed storage rows name these `seq0`/`time0`; the `seq`/`time` fallback
+  // covers a hand-written or already-lifted row.
+  const resolvedSeq = typeof value['seq0'] === 'number'
+    ? value['seq0']
+    : typeof value['seq'] === 'number' ? value['seq'] : seq
+  const time = typeof value['time0'] === 'number'
+    ? value['time0']
+    : typeof value['time'] === 'number' ? value['time'] : 0
 
   if (tag === 'tool-call-chunks') {
     const id = data['id']
@@ -126,6 +144,7 @@ export function parseSessionLog(
   const syntheticGapMs = options.syntheticGapMs ?? 30
   const records: HistoryRecord[] = []
   const skipped: { line: number; reason: string }[] = []
+  let header: Record<string, unknown> | undefined
   let seq = 0
   let clock = 0
   let synthesizedTimes = false
@@ -150,16 +169,26 @@ export function parseSessionLog(
       continue
     }
 
+    // The SessionHeader is metadata, not an event: it carries an id and cwd but
+    // no sequence, and letting it consume seq 0 would shift every real event.
+    if (parsed['type'] === 'session' && parsed['seq'] === undefined && parsed['id'] !== undefined) {
+      header = parsed
+      continue
+    }
+
     seq += 1
-    if (typeof parsed['time'] !== 'number') {
+    const storedTime = typeof parsed['time0'] === 'number'
+      ? parsed['time0']
+      : typeof parsed['time'] === 'number' ? parsed['time'] : undefined
+    if (storedTime === undefined) {
       synthesizedTimes = true
       clock += syntheticGapMs
     }
-    const time = typeof parsed['time'] === 'number' ? parsed['time'] : clock
+    const time = storedTime ?? clock
 
     const tag = parsed['type']
     if (isPackedTag(tag)) {
-      const lifted = liftPacked({ ...parsed, time }, tag, seq)
+      const lifted = liftPacked({ ...parsed, time0: time }, tag, seq)
       if (lifted === undefined) {
         skipped.push({ line: index + 1, reason: `malformed ${tag} row` })
         continue
@@ -185,5 +214,5 @@ export function parseSessionLog(
     records.push({ type: 'event', event })
   }
 
-  return { records, skipped, synthesizedTimes }
+  return { records, skipped, synthesizedTimes, ...header === undefined ? {} : { header } }
 }

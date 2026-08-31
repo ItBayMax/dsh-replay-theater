@@ -56,6 +56,20 @@ export interface Timeline {
 /** Tunables for {@link buildTimeline}. */
 export interface TimelineOptions {
   /**
+   * Lower bound for any single inter-frame gap, in milliseconds.
+   *
+   * Measured on a real production session (5,776 events, 54,626 recorded gaps):
+   * the MEDIAN gap is 0 ms, because provider chunks routinely arrive within the
+   * same millisecond and the log's clock is millisecond-resolution. Replaying
+   * those verbatim makes whole paragraphs appear instantly, which defeats the
+   * point of a cadence theater. A small floor restores visible typing without
+   * inventing structure: the gaps that were genuinely long stay long.
+   *
+   * Default 0 (verbatim). Set 8-16 ms for a readable typing effect.
+   */
+  readonly minGapMs?: number
+
+  /**
    * Upper bound for any single inter-frame gap, in milliseconds.
    *
    * Two independent reasons this must exist:
@@ -144,6 +158,7 @@ export function buildTimeline(
   options: TimelineOptions = {},
 ): Timeline {
   const maxGapMs = options.maxGapMs ?? DEFAULT_MAX_GAP_MS
+  const minGapMs = Math.max(0, options.minGapMs ?? 0)
 
   const raw: RawFrame[] = []
   for (const record of records) {
@@ -172,7 +187,10 @@ export function buildTimeline(
     if (i > 0) {
       const previous = raw[i - 1]
       const rawGap = Math.max(0, current.absMs - (previous?.absMs ?? current.absMs))
-      const gap = Math.min(rawGap, maxGapMs)
+      // Floor first, then ceiling: a floor above the ceiling would otherwise
+      // stretch a compressed gap back out.
+      const floored = Math.max(rawGap, minGapMs)
+      const gap = Math.min(floored, maxGapMs)
       if (gap < rawGap) {
         compressedGaps += 1
         compressedMs += rawGap - gap
