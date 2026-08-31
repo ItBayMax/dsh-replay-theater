@@ -206,6 +206,28 @@ describe('TheaterView', () => {
     expect(screen.getByTestId('theater-stage').textContent).toBe('Hello world')
   })
 
+  it('changes the pause ceiling from the transport bar', () => {
+    const { session } = fakeSession([
+      textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [10_000] }),
+    ])
+    render(<TheaterView session={session} loadOlder={async () => true} t={t} maxGapMs={5000} />)
+    // At a 5s ceiling the 10s gap is compressed by 5s.
+    expect(screen.getByTestId('theater-compressed').textContent).toContain('5000')
+    fireEvent.change(screen.getByTestId('theater-gap'), { target: { value: '200' } })
+    // Tightening to 200ms compresses 9800ms instead.
+    expect(screen.getByTestId('theater-compressed').textContent).toContain('9800')
+  })
+
+  it('drops the compression notice when the ceiling is set to true cadence', () => {
+    const { session } = fakeSession([
+      textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [10_000] }),
+    ])
+    render(<TheaterView session={session} loadOlder={async () => true} t={t} maxGapMs={500} />)
+    expect(screen.getByTestId('theater-compressed')).toBeDefined()
+    fireEvent.change(screen.getByTestId('theater-gap'), { target: { value: 'Infinity' } })
+    expect(screen.queryByTestId('theater-compressed')).toBeNull()
+  })
+
   it('renders scalar events as markers', () => {
     const { session } = fakeSession([
       scalar({ type: 'step/start', seq: 1, time: T0 }),

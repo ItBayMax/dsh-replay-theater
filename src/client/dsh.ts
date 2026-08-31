@@ -98,6 +98,8 @@ export interface TheaterClientContext {
   effect: (fn: () => (() => void) | void, label?: string) => void
   locale: {
     register: (namespace: string, dictionaries: Readonly<Record<string, Readonly<Record<string, string>>>>) => () => void
+    /** Resolve one dictionary key outside a component (used for the tab label). */
+    translate: (namespace: string, key: string) => string
   }
   slots: {
     inject: (name: string, fn: () => void) => void

@@ -23,6 +23,11 @@ export const name = 'dsh-replay-theater/client'
 
 /**
  * Register the dictionaries and the theater view tab.
+ *
+ * The tab label goes through the locale service like every other piece of
+ * product copy (dsh 0.1.2 makes locale ownership a hard rule), which is why
+ * the registration reads it from `ctx.locale.translate` rather than from the
+ * English dictionary directly.
  * @param ctx - the client context.
  */
 export function apply(ctx: TheaterClientContext): void {
@@ -35,7 +40,7 @@ export function apply(ctx: TheaterClientContext): void {
       // After the built-in Chat (0) and Trajectory (10) tabs.
       order: 20,
       locale: NS,
-      label: () => en['view.theater'],
+      label: () => ctx.locale.translate(NS, 'view.theater'),
       inject: (sessionId: SessionId): TheaterInjected => {
         const session = ctx.sessions.binding(sessionId)?.session
         if (session === undefined) {

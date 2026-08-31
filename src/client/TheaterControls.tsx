@@ -7,6 +7,7 @@
 
 import type { Speed } from '../core/player.ts'
 import { SPEEDS } from '../core/player.ts'
+import { GAP_CHOICES } from './TheaterView.tsx'
 import type { Playback } from './usePlayback.ts'
 import type { Translate } from './dsh.ts'
 import styles from './theater.module.css'
@@ -15,6 +16,10 @@ import styles from './theater.module.css'
 export interface TheaterControlsProps {
   readonly playback: Playback
   readonly t: Translate
+  /** Current long-pause ceiling in ms; `Infinity` means true wall-clock cadence. */
+  readonly gapCeiling: number
+  /** Change the ceiling, which rebuilds the timeline. */
+  readonly onGapCeilingChange: (ms: number) => void
   /** Page one older window in; absent when the caller cannot page. */
   readonly onLoadOlder?: () => void
   readonly loadingOlder?: boolean
@@ -40,7 +45,8 @@ export function formatPosition(ms: number): string {
  * @returns the controls element.
  */
 export function TheaterControls({
-  playback, t, onLoadOlder, loadingOlder = false, canLoadOlder = false,
+  playback, t, gapCeiling, onGapCeilingChange,
+  onLoadOlder, loadingOlder = false, canLoadOlder = false,
 }: TheaterControlsProps): JSX.Element {
   const { player, timeline } = playback
   const { positionMs, playing, speed, frameIndex } = player.state
@@ -106,6 +112,22 @@ export function TheaterControls({
           onChange={event => playback.setSpeed(Number(event.target.value) as Speed)}
         >
           {SPEEDS.map(option => <option key={option} value={option}>{`${option}×`}</option>)}
+        </select>
+      </label>
+
+      <label className={styles.speed} title={t('settings.maxGapHint')}>
+        <span className={styles.srOnly}>{t('settings.maxGap')}</span>
+        <select
+          value={String(gapCeiling)}
+          aria-label={t('settings.maxGap')}
+          data-testid="theater-gap"
+          onChange={event => onGapCeilingChange(Number(event.target.value))}
+        >
+          {GAP_CHOICES.map(choice => (
+            <option key={String(choice)} value={String(choice)}>
+              {choice === Infinity ? '∞' : `${choice}ms`}
+            </option>
+          ))}
         </select>
       </label>
 
