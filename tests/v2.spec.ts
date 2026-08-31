@@ -233,3 +233,94 @@ describe('summarize', () => {
     expect(summary).toEqual({ frames: 0, totalMs: 0, text: '', reasoning: '', tools: [] })
   })
 })
+
+describe('real production storage format', () => {
+  // These guard bugs found only by running against a real 5,776-event
+  // production log on a live dsh server (0.1.1-rc.2): packed storage rows name
+  // their coordinates `seq0`/`time0`, and the first line is a SessionHeader
+  // that must not consume a sequence. Reading the source alone did not reveal
+  // either — the wire type uses `seq`/`time`, the storage type does not.
+  it('reads seq0/time0 from a packed storage row', () => {
+    const log = '{"type":"text-chunks","seq0":42,"time0":1700,"data":{"turn":1,"step":1,"index":0,"dt":[7],"texts":["a","b"]}}'
+    const parsed = parseSessionLog(log)
+    expect(parsed.synthesizedTimes).toBe(false)
+    const record = parsed.records[0]
+    expect(record?.type === 'chunks' && record.event.seq).toBe(42)
+    expect(record?.type === 'chunks' && record.event.time).toBe(1700)
+  })
+
+  it('keeps the SessionHeader out of records and out of the sequence space', () => {
+    const log = [
+      '{"type":"session","version":0,"id":"abc","createdAt":1786896131629,"cwd":"/w","delegationDepth":0}',
+      '{"type":"permission/preset","seq":0,"time":100,"data":{"preset":"x"}}',
+    ].join('\n')
+    const parsed = parseSessionLog(log)
+    expect(parsed.records).toHaveLength(1)
+    expect(parsed.records[0]?.event.seq).toBe(0)
+    expect(parsed.header?.['id']).toBe('abc')
+  })
+
+  it('does not claim synthetic times for a log that has real ones', () => {
+    const log = [
+      '{"type":"session","version":0,"id":"a","createdAt":1,"cwd":"/w"}',
+      '{"type":"turn/start","seq":0,"time":1000,"data":{"turn":1}}',
+      '{"type":"text-chunks","seq0":1,"time0":1105,"data":{"turn":1,"step":1,"index":0,"dt":[0,0],"texts":["x","y","z"]}}',
+    ].join('\n')
+    const parsed = parseSessionLog(log)
+    expect(parsed.synthesizedTimes).toBe(false)
+    const timeline = buildTimeline(parsed.records, { maxGapMs: Infinity })
+    // The 105ms first-token latency must survive verbatim.
+    expect(timeline.frames.map(frame => frame.atMs)).toEqual([0, 105, 105, 105])
+  })
+
+  it('still treats a genuinely timestamp-free log as synthetic', () => {
+    expect(parseSessionLog('{"type":"turn/start"}').synthesizedTimes).toBe(true)
+  })
+})
+
+describe('minGapMs (real dt distribution is median 0ms)', () => {
+  it('floors zero-length gaps so tokens are visible', () => {
+    const timeline = buildTimeline(
+      [textRun({ seq: 1, time: T0, texts: ['a', 'b', 'c'], dt: [0, 0] })],
+      { minGapMs: 10 },
+    )
+    expect(timeline.frames.map(frame => frame.atMs)).toEqual([0, 10, 20])
+  })
+
+  it('leaves a genuinely long gap long', () => {
+    const timeline = buildTimeline(
+      [textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [400] })],
+      { minGapMs: 10, maxGapMs: 2000 },
+    )
+    expect(timeline.totalMs).toBe(400)
+  })
+
+  it('does not report a floored gap as compressed', () => {
+    const timeline = buildTimeline(
+      [textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [0] })],
+      { minGapMs: 10 },
+    )
+    expect(timeline.compressedGaps).toBe(0)
+  })
+
+  it('lets the ceiling win when the floor would exceed it', () => {
+    const timeline = buildTimeline(
+      [textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [0] })],
+      { minGapMs: 500, maxGapMs: 100 },
+    )
+    expect(timeline.totalMs).toBe(100)
+  })
+
+  it('is verbatim by default', () => {
+    const timeline = buildTimeline([textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [0] })])
+    expect(timeline.totalMs).toBe(0)
+  })
+
+  it('ignores a negative floor', () => {
+    const timeline = buildTimeline(
+      [textRun({ seq: 1, time: T0, texts: ['a', 'b'], dt: [5] })],
+      { minGapMs: -100 },
+    )
+    expect(timeline.totalMs).toBe(5)
+  })
+})
