@@ -1,0 +1,12 @@
+node_modules/
+lib/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.codex/
+.qoder/
+.cursor/
