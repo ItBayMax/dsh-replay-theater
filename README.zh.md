@@ -89,6 +89,22 @@ npx vitest run tests/timeline.spec.ts tests/player.spec.ts
 
 架构与各阶段实现记录见 [`docs/`](docs/)。
 
+## 离线命令行
+
+回放核心零框架依赖，所以浏览器标签页用的那些函数在脚本里同样可用：
+
+```bash
+npm run build
+node scripts/replay-cli.mjs path/to/session.jsonl --frames 20
+node scripts/replay-cli.mjs run-a.jsonl run-b.jsonl        # 对比两次运行
+```
+
+比如对比两份上游快照，会报出它们从哪里开始不一致：
+
+```
+comparison: diverged at frame 14 (marker-type), left seq 15 / right seq 15
+```
+
 ## 许可
 
 MIT
