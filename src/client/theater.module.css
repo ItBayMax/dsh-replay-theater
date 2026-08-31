@@ -158,3 +158,95 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* ── v2: side-by-side comparison and offline drop ─────────────────────── */
+
+.compare {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compareHeader {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.compareBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.comparePane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid var(--dsh-border, rgba(127, 127, 127, 0.25));
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+
+.compareLabel {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.compareStats {
+  margin: 0;
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-family: ui-monospace, monospace;
+}
+
+.drop {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem;
+  border: 1px dashed var(--dsh-border, rgba(127, 127, 127, 0.35));
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.dropTitle {
+  margin: 0;
+  font-weight: 600;
+}
+
+.dropHint {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.dropError {
+  margin: 0;
+  color: var(--dsh-danger, #d1453b);
+}
+
+.offlineLoaded {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--dsh-border, rgba(127, 127, 127, 0.25));
+  border-radius: 0.5rem;
+}
