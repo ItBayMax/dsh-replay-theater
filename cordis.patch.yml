@@ -1,0 +1,9 @@
+# Profile patch: mount the replay theater's client half.
+#
+# `dsh plugin --profile web add dsh-replay-theater` picks this up because the
+# package declares `dsh.bundle.patch` — the CLI reconciles the profile's bundle
+# layer list against installed packages that declare it, so no manual edit of
+# cordis.patch.yml is needed.
+- insert:
+    - id: dsh-replay-theater
+      name: 'dsh-replay-theater'
