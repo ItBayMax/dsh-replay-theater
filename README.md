@@ -72,7 +72,7 @@ Developed against **dsh `0.1.2-alpha.2`** (upstream commit `0a53fb5`). It reads 
 
 ```bash
 npm install
-npm test          # 104 tests
+npm test          # 148 tests
 npm run typecheck
 ```
 
