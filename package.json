@@ -55,13 +55,15 @@
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "README.md",
-    "README.zh.md"
+    "README.zh.md",
+    "scripts/replay-cli.mjs"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "replay": "node scripts/replay-cli.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",

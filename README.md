@@ -89,6 +89,22 @@ Test fixtures come in two kinds, for a documented reason:
 
 See [`docs/`](docs/) for the architecture and per-phase implementation notes.
 
+## Offline CLI
+
+The replay core is framework-free, so the same functions the browser tab uses also work in a script:
+
+```bash
+npm run build
+node scripts/replay-cli.mjs path/to/session.jsonl --frames 20
+node scripts/replay-cli.mjs run-a.jsonl run-b.jsonl        # compare two runs
+```
+
+Comparing two upstream snapshots, for example, reports where they stop matching:
+
+```
+comparison: diverged at frame 14 (marker-type), left seq 15 / right seq 15
+```
+
 ## License
 
 MIT
