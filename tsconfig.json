@@ -18,6 +18,7 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "types": ["node"],
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*", "tests/**/*"]
