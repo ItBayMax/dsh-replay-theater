@@ -27,7 +27,15 @@
       "types": "./lib/types/core/timeline.d.ts",
       "default": "./lib/core/timeline.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./compare": {
+      "types": "./lib/types/core/compare.d.ts",
+      "default": "./lib/core/compare.js"
+    },
+    "./jsonl": {
+      "types": "./lib/types/core/jsonl.d.ts",
+      "default": "./lib/core/jsonl.js"
+    }
   },
   "dsh": {
     "bundle": {

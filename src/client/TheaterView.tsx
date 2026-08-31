@@ -1,12 +1,16 @@
 /**
- * The theater tab: stage plus transport bar over one session's history window.
+ * The theater tab: stage plus transport bar over one session's history window,
+ * with an optional side-by-side comparison against a recorded log.
  *
  * @module dsh-replay-theater/client/TheaterView
  */
 
-import { useCallback, useState } from 'react'
-import { DEFAULT_MAX_GAP_MS } from '../core/timeline.ts'
+import { useCallback, useMemo, useState } from 'react'
+import { buildTimeline, DEFAULT_MAX_GAP_MS } from '../core/timeline.ts'
+import { CompareView } from './CompareView.tsx'
 import type { TheaterInjected, Translate } from './dsh.ts'
+import type { OfflineLog } from './OfflineDrop.tsx'
+import { OfflineDrop } from './OfflineDrop.tsx'
 import { TheaterControls } from './TheaterControls.tsx'
 import { TheaterStage } from './TheaterStage.tsx'
 import { usePlayback } from './usePlayback.ts'
@@ -32,6 +36,7 @@ export function TheaterView({ session, loadOlder, t, maxGapMs }: TheaterViewProp
   const [gapCeiling, setGapCeiling] = useState<number>(maxGapMs ?? DEFAULT_MAX_GAP_MS)
   const playback = usePlayback(session, { maxGapMs: gapCeiling })
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [offline, setOffline] = useState<OfflineLog | undefined>(undefined)
   const hasMore = session.eventSource.getSnapshot().hasMore
 
   const handleLoadOlder = useCallback(() => {
@@ -40,13 +45,33 @@ export function TheaterView({ session, loadOlder, t, maxGapMs }: TheaterViewProp
     loadOlder().finally(() => setLoadingOlder(false))
   }, [loadOlder])
 
+  // The compared side is static: it has no player of its own, so it renders at
+  // its end state while the live side plays. That keeps one clock in the view.
+  const offlineTimeline = useMemo(
+    () => (offline === undefined
+      ? undefined
+      : buildTimeline(offline.records, { maxGapMs: gapCeiling })),
+    [offline, gapCeiling],
+  )
+
   return (
     <div className={styles.root} data-testid="theater-root">
-      <TheaterStage
-        stage={playback.stage}
-        t={t}
-        emptyTimeline={playback.timeline.frames.length === 0}
-      />
+      {offlineTimeline === undefined
+        ? (
+          <TheaterStage
+            stage={playback.stage}
+            t={t}
+            emptyTimeline={playback.timeline.frames.length === 0}
+          />
+        )
+        : (
+          <CompareView
+            t={t}
+            left={{ label: t('compare.left'), timeline: playback.timeline, playback }}
+            right={{ label: offline?.name ?? t('compare.right'), timeline: offlineTimeline }}
+          />
+        )}
+
       <TheaterControls
         playback={playback}
         t={t}
@@ -56,6 +81,24 @@ export function TheaterView({ session, loadOlder, t, maxGapMs }: TheaterViewProp
         loadingOlder={loadingOlder}
         canLoadOlder={hasMore}
       />
+
+      {offline === undefined
+        ? <OfflineDrop t={t} onLoad={setOffline} />
+        : (
+          <div className={styles.offlineLoaded} data-testid="offline-loaded">
+            <span>
+              {t('offline.loaded', { count: offline.records.length, name: offline.name })}
+              {offline.synthesizedTimes ? ` · ${t('offline.synthetic')}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => setOffline(undefined)}
+              data-testid="offline-clear"
+            >
+              {t('offline.clear')}
+            </button>
+          </div>
+        )}
     </div>
   )
 }

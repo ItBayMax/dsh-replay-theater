@@ -47,6 +47,7 @@ export const en = {
   'offline.parseError': 'That file could not be read as a session log.',
   'offline.loaded': 'Loaded {count} events from {name}',
   'offline.clear': 'Close file',
+  'offline.synthetic': 'This log carried no timestamps — cadence is uniform, not original',
 } as const
 
 /** Chinese dictionary. Same key set as {@link en} — parity is a hard rule. */
@@ -83,6 +84,7 @@ export const zh = {
   'offline.parseError': '这个文件无法作为会话日志读取。',
   'offline.loaded': '已从 {name} 载入 {count} 个事件',
   'offline.clear': '关闭文件',
+  'offline.synthetic': '该日志没有时间戳——节奏是均匀的，不是原始节奏',
 } as const
 
 /** Key union for this namespace, used by the dsh locale service declaration. */
