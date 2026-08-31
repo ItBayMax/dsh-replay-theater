@@ -1,6 +1,6 @@
 {
   "name": "dsh-replay-theater",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Replay a DeepSeek Harness session at its original token cadence — an in-app playback theater with play/pause/step/speed/seek.",
   "keywords": [
     "dsh",
@@ -52,6 +52,7 @@
   },
   "files": [
     "lib/**/*.js",
+    "lib/**/*.js.map",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "README.md",
@@ -62,7 +63,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/build-client.mjs",
     "replay": "node scripts/replay-cli.mjs"
   },
   "peerDependencies": {
@@ -82,7 +83,9 @@
     "@types/node": "^22.20.1",
     "@types/react": "~18.3.1",
     "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.24.2",
     "jsdom": "^25.0.1",
+    "lightningcss": "^1.33.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "~5.7.2",
