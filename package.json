@@ -1,6 +1,6 @@
 {
   "name": "dsh-replay-theater",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Replay a DeepSeek Harness session at its original token cadence — an in-app playback theater with play/pause/step/speed/seek.",
   "keywords": [
     "dsh",
@@ -43,9 +43,9 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-primitives"
+        "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
     }
