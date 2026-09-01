@@ -9,6 +9,25 @@ English | [中文](README.zh.md)
 
 Not a static timeline: the assistant's answer grows token by token, spaced by the real millisecond gaps recorded when it was generated.
 
+![The Theater tab replaying a recorded session](assets/screenshot-stage-en.png)
+
+<details>
+<summary><b>More screenshots</b> — transport controls, and side-by-side comparison</summary>
+
+**Transport bar and marker rail.** Play/pause, single-step, restart, scrub, speed, and a
+"max pause" ceiling. Scalar events (`step/start`, `tool/result`, …) sit on their own rail, and
+the bar states how much silence was compressed — playback alters timing, so it says so.
+
+![Transport controls and the marker rail](assets/screenshot-transport-en.png)
+
+**Side-by-side comparison (v2).** Load a recorded `session.jsonl` next to the live one and the
+theater reports where the two runs stop matching, with a seek coordinate for each side.
+
+![Two runs compared, with the first divergence highlighted](assets/screenshot-compare-en.png)
+
+</details>
+
+
 ## Why this exists
 
 Upstream keeps every token's real inter-arrival gap in the session log, and says why:

@@ -9,6 +9,25 @@
 
 不是静态时间线：助手的回答一个 token 一个 token 地长出来，间隔就是当时生成时记录的真实毫秒数。
 
+![剧场标签页正在回放一次录制的会话](assets/screenshot-stage-zh.png)
+
+<details>
+<summary><b>更多截图</b>——播放条与并排对比</summary>
+
+**播放条与 marker 轨**。播放/暂停、单步、重播、拖拽跳转、倍速，以及"最长停顿"上限。
+标量事件（`step/start`、`tool/result`…）单独成轨；压缩了多少静默会直接写在条上——
+**回放改动了数据的时间，所以它必须告知**。
+
+![播放条与 marker 轨](assets/screenshot-transport-zh.png)
+
+**并排对比（v2）**。把一份录制的 `session.jsonl` 与当前会话并排放，剧场会报出两次运行
+从哪里开始不一致，并给出各自的跳转坐标。
+
+![两次运行并排对比，标出首个分歧点](assets/screenshot-compare-zh.png)
+
+</details>
+
+
 ## 为什么会有这个插件
 
 上游把每个 token 的真实到达间隔完整保留在会话日志里，并写明了原因：
