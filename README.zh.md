@@ -91,7 +91,7 @@ dsh plugin --profile web add "github:ItBayMax/dsh-replay-theater#main"
 
 ```bash
 npm install
-npm test          # 148 个测试
+npm test          # 158 个测试
 npm run typecheck
 ```
 
