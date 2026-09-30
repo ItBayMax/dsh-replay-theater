@@ -24,10 +24,12 @@ export { findDivergence, summarize } from './core/compare.ts'
 export type { Divergence, SideSummary } from './core/compare.ts'
 export { parseSessionLog } from './core/jsonl.ts'
 export type { ParsedLog } from './core/jsonl.ts'
+export { assistantEventData, recordLastSeq, runMembers } from './core/wire.ts'
 export type {
-  ChunkRowEvent,
+  AssistantEventData,
+  AssistantStreamRecord,
+  AssistantStreamRun,
   HistoryRecord,
   ScalarEvent,
-  TextRunData,
-  ToolCallRunData,
+  WireEvent,
 } from './core/wire.ts'

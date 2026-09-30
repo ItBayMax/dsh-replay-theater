@@ -9,8 +9,13 @@
  * @module dsh-replay-theater/core/timeline
  */
 
-import type { ChunkRowEvent, HistoryRecord, ScalarEvent } from './wire.ts'
-import { runMembers } from './wire.ts'
+import type {
+  AssistantStreamRun,
+  HistoryRecord,
+  ScalarEvent,
+  WireEvent,
+} from './wire.ts'
+import { assistantEventData, runMembers } from './wire.ts'
 
 /** What one frame puts on the stage. */
 export type FramePayload =
@@ -29,13 +34,31 @@ export type FramePayload =
   /** A scalar event placed on the timeline as a marker. */
   | { readonly kind: 'marker'; readonly event: ScalarEvent }
 
+/**
+ * Marker type this module synthesizes for a non-delta stream member.
+ *
+ * Upstream's fourth `AssistantStreamRecord` variant (`{ type: 'chunk', time,
+ * chunk }`) carries a single chunk the accumulator never packs, with no member
+ * strings to type out. Dropping it would silently remove a real timing point,
+ * so it becomes a marker instead. **This is not an upstream event type** — it
+ * exists only inside a built timeline.
+ */
+export const SYNTHETIC_CHUNK_MARKER = 'assistant/stream-chunk'
+
 /** One thing that happens at one point in playback time. */
 export interface Frame {
   /** Milliseconds from the start of playback. Monotonic non-decreasing. */
   readonly atMs: number
-  /** The logical session sequence this frame came from. */
+  /**
+   * The logical session sequence this frame came from.
+   *
+   * Since session format v2 a settled assistant attempt occupies **one**
+   * sequence, so every frame expanded out of one attempt shares it. Seek
+   * coordinates derived from this are therefore attempt-grained, not
+   * token-grained; ordering inside an attempt comes from the stream array.
+   */
   readonly seq: number
-  /** Turn number when known (packed runs carry it; scalar markers may not). */
+  /** Turn number when known (settled assistant events carry it; markers may not). */
   readonly turn?: number
   /** Step number when known. */
   readonly step?: number
@@ -75,8 +98,8 @@ export interface TimelineOptions {
    * Two independent reasons this must exist:
    * 1. A real session's silences (a model thinking for 30 s, a user away for an
    *    hour between turns) would make playback unwatchable.
-   * 2. Upstream states a gap may be NEGATIVE when the wall clock stepped
-   *    backwards (chunk-rows.ts:36-37), so gaps need clamping anyway.
+   * 2. A gap may be NEGATIVE when the wall clock stepped backwards, so gaps
+   *    need clamping anyway.
    *
    * Default 2000 ms. Set `Infinity` for true wall-clock fidelity.
    */
@@ -90,6 +113,8 @@ export const DEFAULT_MAX_GAP_MS = 2000
 interface RawFrame {
   readonly absMs: number
   readonly seq: number
+  /** Position in the source order, used to keep frames of one attempt in order. */
+  readonly ordinal: number
   readonly turn?: number
   readonly step?: number
   readonly payload: FramePayload
@@ -98,41 +123,51 @@ interface RawFrame {
 /**
  * Expand one packed delta run into per-member raw frames.
  *
- * The member texts are never joined upstream ("token boundaries are data",
- * chunk-rows.ts:48) and `dt[i]` is the gap between member `i` and `i+1`, so
- * member `k`'s absolute time is `time + sum(dt[0..k-1])`.
- * @param event - one packed chunk-row event.
- * @returns raw frames in log order, one per member.
+ * The member texts are never joined upstream ("token boundaries are data") and
+ * `dt[i]` is the gap between member `i` and `i+1`, so member `k`'s absolute time
+ * is `time0 + sum(dt[0..k-1])`.
+ * @param run - one packed run from a settled assistant stream.
+ * @param event - the settled assistant event carrying it.
+ * @param turn - turn number from the event's data, when present.
+ * @param step - step number from the event's data, when present.
+ * @param nextOrdinal - allocates the source-order position of each frame.
+ * @returns raw frames in stream order, one per member.
  */
-function expandRun(event: ChunkRowEvent): RawFrame[] {
-  const members = runMembers(event)
-  const { turn, step, index, dt } = event.data
+function expandRun(
+  run: AssistantStreamRun,
+  event: WireEvent,
+  turn: number | undefined,
+  step: number | undefined,
+  nextOrdinal: () => number,
+): RawFrame[] {
+  const members = runMembers(run)
   const frames: RawFrame[] = []
-  let absMs = event.time
+  let absMs = run.time0
   for (let i = 0; i < members.length; i += 1) {
     if (i > 0) {
-      // A negative or missing gap contributes nothing; ordering is by log
+      // A negative or missing gap contributes nothing; ordering is by stream
       // position, never by timestamp.
-      absMs += Math.max(0, dt[i - 1] ?? 0)
+      absMs += Math.max(0, run.dt[i - 1] ?? 0)
     }
     const text = members[i] ?? ''
     frames.push({
       absMs,
-      seq: event.seq + i,
-      turn,
-      step,
-      payload: event.type === 'chunkrow/tool-call-chunks'
+      seq: event.seq,
+      ordinal: nextOrdinal(),
+      ...turn === undefined ? {} : { turn },
+      ...step === undefined ? {} : { step },
+      payload: run.type === 'tool-call-chunks'
         ? {
           kind: 'tool-args',
           text,
-          block: index,
-          callId: event.data.id,
-          ...event.data.name === undefined ? {} : { toolName: event.data.name },
+          block: run.index,
+          callId: run.id,
+          ...run.name === undefined ? {} : { toolName: run.name },
         }
         : {
-          kind: event.type === 'chunkrow/reasoning-chunks' ? 'reasoning' : 'text',
+          kind: run.type === 'reasoning-chunks' ? 'reasoning' : 'text',
           text,
-          block: index,
+          block: run.index,
         },
     })
   }
@@ -161,21 +196,50 @@ export function buildTimeline(
   const minGapMs = Math.max(0, options.minGapMs ?? 0)
 
   const raw: RawFrame[] = []
-  for (const record of records) {
-    if (record.type === 'chunks') {
-      raw.push(...expandRun(record.event))
-      continue
-    }
-    raw.push({
-      absMs: record.event.time,
-      seq: record.event.seq,
-      payload: { kind: 'marker', event: record.event },
-    })
+  let ordinal = 0
+  const nextOrdinal = (): number => {
+    ordinal += 1
+    return ordinal
   }
 
-  // Log order is authoritative, but a caller may hand us concatenated windows;
-  // sorting by seq keeps the timeline coherent without trusting timestamps.
-  raw.sort((left, right) => left.seq - right.seq)
+  for (const record of records) {
+    // Client-only provisional frames are superseded atomically by the settled
+    // assistant event; replaying both would duplicate every token.
+    if (record.type !== 'event') continue
+    const { event } = record
+    const assistant = assistantEventData(event)
+    if (assistant === undefined) {
+      raw.push({
+        absMs: event.time,
+        seq: event.seq,
+        ordinal: nextOrdinal(),
+        payload: { kind: 'marker', event },
+      })
+      continue
+    }
+    for (const member of assistant.stream) {
+      if (member.type === 'chunk') {
+        raw.push({
+          absMs: member.time,
+          seq: event.seq,
+          ordinal: nextOrdinal(),
+          ...assistant.turn === undefined ? {} : { turn: assistant.turn },
+          ...assistant.step === undefined ? {} : { step: assistant.step },
+          payload: {
+            kind: 'marker',
+            event: { type: SYNTHETIC_CHUNK_MARKER, seq: event.seq, time: member.time },
+          },
+        })
+        continue
+      }
+      raw.push(...expandRun(member, event, assistant.turn, assistant.step, nextOrdinal))
+    }
+  }
+
+  // Log order is authoritative, but a caller may hand us concatenated windows,
+  // so sort by seq without trusting timestamps. A settled attempt occupies one
+  // seq, so the ordinal tiebreak is what keeps its members in stream order.
+  raw.sort((left, right) => (left.seq - right.seq) || (left.ordinal - right.ordinal))
 
   const frames: Frame[] = []
   let elapsed = 0
@@ -246,6 +310,16 @@ export function frameIndexAt(timeline: Timeline, atMs: number): number {
 export interface StageBlock {
   readonly kind: 'text' | 'reasoning' | 'tool-args'
   readonly block: number
+  /**
+   * Sequence of the attempt this block came from.
+   *
+   * Part of the block identity, not decoration: a retried step settles as an
+   * `assistant/attempt` (the abandoned try) followed by an `assistant/message`
+   * (the one that stuck), and both can carry the same turn, step and block
+   * index. Without the sequence they would concatenate into one block and read
+   * as a single continuous answer.
+   */
+  readonly seq: number
   readonly turn?: number
   readonly step?: number
   readonly callId?: string
@@ -285,6 +359,7 @@ export function stageAt(timeline: Timeline, throughIndex: number): StageState {
     const sameBlock = open !== undefined
       && open.kind === payload.kind
       && open.block === payload.block
+      && open.seq === frame.seq
       && open.turn === frame.turn
       && open.step === frame.step
       && open.callId === (payload.kind === 'tool-args' ? payload.callId : undefined)
@@ -295,6 +370,7 @@ export function stageAt(timeline: Timeline, throughIndex: number): StageState {
     blocks.push({
       kind: payload.kind,
       block: payload.block,
+      seq: frame.seq,
       ...frame.turn === undefined ? {} : { turn: frame.turn },
       ...frame.step === undefined ? {} : { step: frame.step },
       ...payload.kind === 'tool-args' ? { callId: payload.callId } : {},

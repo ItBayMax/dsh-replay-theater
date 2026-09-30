@@ -63,7 +63,8 @@ describe('CompareView', () => {
       left={{ label: 'A', timeline: hello }}
       right={{ label: 'B', timeline: helpMe }}
     />)
-    expect(screen.getByTestId('compare-divergence').textContent).toContain('seq 2')
+    // Attempt-grained since format v2: both frames carry their attempt's seq.
+    expect(screen.getByTestId('compare-divergence').textContent).toContain('seq 1')
   })
 
   it('says so when two runs agree', () => {
@@ -120,7 +121,7 @@ describe('describeDivergence', () => {
   })
 
   it('describes a divergence with its sequence', () => {
-    expect(describeDivergence(findDivergence(hello, helpMe), t)).toContain('seq 2')
+    expect(describeDivergence(findDivergence(hello, helpMe), t)).toContain('seq 1')
   })
 })
 

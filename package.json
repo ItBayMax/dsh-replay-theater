@@ -1,6 +1,6 @@
 {
   "name": "dsh-replay-theater",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Replay a DeepSeek Harness session at its original token cadence — an in-app playback theater with play/pause/step/speed/seek.",
   "keywords": [
     "dsh",
@@ -38,6 +38,7 @@
     }
   },
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
@@ -92,6 +93,7 @@
     "vitest": "^2.1.8"
   },
   "engines": {
+    "dsh": "^0.2.0",
     "node": "^22.19 || >=24"
   }
 }

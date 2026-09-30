@@ -3,12 +3,11 @@
  *
  * Why a mirror instead of `import type` from `@deepseek-ai/*`:
  * `@deepseek-ai/dsh-api-session-controller` and the `ui-*` client packages that
- * declare these faces are NOT published to npm (verified 2026-08-31 — only
- * `dsh-session@0.0.1-rc.1` and a few client packages are). Mirroring keeps this
- * package installable and testable standalone. Every declaration below is
- * structurally compatible with upstream at commit 0a53fb5 (dsh@0.1.2-alpha.2)
- * and records where it was read from, so a future version can replace this file
- * with real imports without touching a single call site.
+ * declare these faces are NOT published to npm. Mirroring keeps this package
+ * installable and testable standalone. Every declaration below is structurally
+ * compatible with upstream at commit 639ed01 (dsh@0.2.0-rc.2) and records where
+ * it was read from, so a future version can replace this file with real imports
+ * without touching a single call site.
  *
  * @module dsh-replay-theater/client/dsh
  */
@@ -29,9 +28,14 @@ export interface ObservableSnapshot<T> {
  * One materialized window of session history plus the live tail.
  *
  * Mirrors `SessionEventWindow` —
- * packages/api/session-controller/src/client/contract/events.ts:84.
- * `entries` are aligned wire records: the OUTER `type` (`'event' | 'chunks'`)
- * is the only safe discriminator.
+ * packages/api/session-controller/src/client/contract/events.ts:109-114.
+ * `entries` are aligned wire records whose OUTER `type` is the only safe
+ * discriminator: `'event'` for a durable event, `'transient'` for a client-only
+ * live assistant frame that a later settlement replaces atomically.
+ *
+ * Upstream also publishes a `change` field on this window describing what the
+ * last mutation did. The theater rebuilds from `entries` and does not read it,
+ * so it is omitted here rather than mirrored inaccurately.
  */
 export interface SessionEventWindow {
   readonly entries: readonly HistoryRecord[]

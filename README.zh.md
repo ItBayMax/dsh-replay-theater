@@ -5,14 +5,6 @@
 
 [English](README.md) | 中文
 
-> [!WARNING]
-> **尚不兼容 dsh 0.2.0。** 本插件消费的 `chunkrow/*` 事件已被上游移除：v1→v2 的会话格式迁移把流折叠进了
-> `assistant/message.data.stream[]`，且从格式 v2 起每个物理行只存一个事件。立论依然成立——
-> `time0` / `index` / `dt` / `texts` 字段名未变、逐 token 间隔仍被完整保留——但读取端需要移植。
-> 在 **0.1.2-alpha.2** 上可用。详情见
-> [discussion #5270](https://github.com/deepseek-ai/deepseek-harness/discussions/5270)。
-
-
 **按原始 token 节奏重演一次 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 会话**——站内播放剧场，支持播放、暂停、单步、倍速、拖拽跳转。
 
 不是静态时间线：助手的回答一个 token 一个 token 地长出来，间隔就是当时生成时记录的真实毫秒数。
@@ -38,17 +30,23 @@
 
 ## 为什么会有这个插件
 
-上游把每个 token 的真实到达间隔完整保留在会话日志里，并写明了原因：
+上游把每个 token 的真实到达间隔完整保留在会话日志里，并明说这是刻意的：
 
 ```ts
-// packages/core/session/src/chunk-rows.ts:44
-/** Epoch-ms gaps between consecutive members; length is one less than the member count. */
-dt: number[]
+// packages/core/session/src/types.ts:341-348
+'assistant/message': {
+  turn: number
+  step: number
+  message: AssistantMessage
+  /** Exact timed model stream, compacted without joining delta boundaries. */
+  stream: AssistantStreamRecord[]
+  …
+}
 ```
 
-> *"one entry per member, never joined — **token boundaries are data**"* —— chunk-rows.ts:48
+> *"**Lossless** compact representation of one model-stream attempt"* —— packages/llm/llm/src/assistant-stream.ts:1-2
 
-打包存储时**刻意不把**一段 run 的成员合并成一个字符串，所以节奏得以保留。而 harness 里没有任何东西用过这份数据。这个插件就是那个使用者。
+一次落定的 attempt 把逐 token 间隔留在 `dt` 里，而**不把成员合并成一个字符串**，所以节奏在磁盘上得以保留。而 harness 里没有任何东西回放它。这个插件就是那个使用者。
 
 ## 安装
 
@@ -89,17 +87,22 @@ dsh plugin --profile web add "github:ItBayMax/dsh-replay-theater#main"
 - **无随机访问**：dsh 客户端无法请求任意序号——历史只能向前翻页、一次一个窗口（`session.loadOlder()`），而生产环境单个尾页可达几十万事件。所以剧场回放**已加载的窗口**，并给一个显式的"加载更早"动作，而不是悄悄把整条日志拉进浏览器。
 - **长静默默认被压缩**（上限 2000ms）。要真实节奏请选 `∞`。
 - **实时会话会在你脚下增长**：窗口是被跟随的，追加帧时播放位置不会丢。
-- **类型是镜像而非导入**：`@deepseek-ai/dsh-api-session-controller` 未发布到 npm，所以 `src/core/wire.ts` 与 `src/client/dsh.ts` 自持上游形状的结构化镜像，逐条标注读取自哪个 `file:line`（钉在 dsh `0a53fb5` / `0.1.2-alpha.2`）。它们结构兼容，将来换成真 import 不需要改任何调用点。
+- **跳转坐标是 attempt 粒度**：自会话格式 v2 起，一次落定的 attempt 无论含多少 token 都**只占一个 seq**，所以分歧报告指向的是 attempt 而非 token；attempt 内部的顺序来自 stream 位置。
+- **类型是镜像而非导入**：`@deepseek-ai/dsh-api-session-controller` 未发布到 npm，所以 `src/core/wire.ts` 与 `src/client/dsh.ts` 自持上游形状的结构化镜像，逐条标注读取自哪个 `file:line`（钉在 dsh `639ed01` / `0.2.0-rc.2`）。它们结构兼容，将来换成真 import 不需要改任何调用点。
 
 ## 兼容性
 
-针对 **dsh `0.1.2-alpha.2`**（上游 commit `0a53fb5`）开发。只读公开客户端面——`session.eventSource` 与 `session.loadOlder()`——因为上游在 0.1.2 里删掉了整个 `client/runtime` 包，依赖内部实现活不长。
+针对 **dsh `0.2.0-rc.2`**（上游 commit `639ed01`）开发。只读公开客户端面——`session.eventSource` 与 `session.loadOlder()`——因为上游会在小版本之间整包删除客户端代码，依赖内部实现活不长。
+
+**两代磁盘格式都能读**。落定的 attempt 是一条 `assistant/message` / `assistant/attempt`，打包 run 放在 `data.stream` 里（格式 v2 及以后，当前是 v4）。generation 0 的日志——文件名是不带版本后缀的 `session.jsonl`——则是一个 run 一个打包行；离线解析器会把它提升成当前形状，所以旧文件照样能回放。
+
+客户端专有的 `transient` 条目会被忽略：上游会用落定事件原子替换它们，两者都放会让每个 token 播两遍。
 
 ## 开发
 
 ```bash
 npm install
-npm test          # 158 个测试
+npm test          # 165 个测试
 npm run typecheck
 ```
 
@@ -112,9 +115,13 @@ npx vitest run tests/timeline.spec.ts tests/player.spec.ts
 测试夹具分两种，理由有据：
 
 - **`tests/fixtures/synthetic.ts`**——手工构造、`dt` 数组精确。节奏断言都在这里。
-- **`tests/fixtures/corpus-*.json`**——由 `make-corpus-fixture.mjs` 从上游录制会话派生，用来证明 wire 镜像能吃真实形状。它**无法**承载节奏断言：上游语料归一化时剥掉了 `seq`/`time`，而全部 118 个快照会话里最长的"连续同块 delta"只有 2 个成员。
+- **`tests/fixtures/corpus-*.json`**——由 `make-corpus-fixture.mjs` 从上游录制会话派生，用来证明 wire 镜像能吃真实形状。这份语料能证明什么、不能证明什么，在 0.2.0 上变了，以下为 `639ed01` 实测：
+  - **形状：能**。173 个 `session.v3.jsonl` 快照，其中 168 个带 stream，共 526 段打包 run。run 内的 `time0` 与 `dt` 在归一化后**全部 526 段都还在**（400 个不同的 `time0` epoch 毫秒值），最长的一段 run 有 **2047** 个成员——插件要展开的那个形状，覆盖是够的。
+  - **真实节奏：不能**。行级 `seq`/`time` 依然被剥掉（4343 行里 0 行保留），526 段 run 里有 373 段的 `dt` 全为零，而整个语料中最大的一个间隔只有 **156 ms**。这些会话是对着快速或打桩的模型录的，不存在"模型停下来想几十秒"那种节奏可供断言。计时测试因此走合成夹具。
 
-架构与各阶段实现记录见 [`docs/`](docs/)。
+架构与各阶段实现记录见 [`docs/`](docs/)。其中 01-06 是按 0.1.2 时期原样保留的
+开发日志；当前线格式与本次 0.2.0 移植改了什么，见
+[07-移植到 0.2.0](docs/07-%E7%A7%BB%E6%A4%8D%E5%88%B0-0.2.0.md)。
 
 ## 离线命令行
 

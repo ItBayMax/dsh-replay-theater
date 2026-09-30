@@ -37,7 +37,7 @@ export function TheaterStage({ stage, t, emptyTimeline }: TheaterStageProps): JS
         <section
           // Block identity is (kind, block, turn, step, callId); the index is a
           // stable tiebreak because blocks are append-only during playback.
-          key={`${block.kind}-${block.turn ?? 0}-${block.step ?? 0}-${block.block}-${block.callId ?? ''}-${index}`}
+          key={`${block.kind}-${block.seq}-${block.turn ?? 0}-${block.step ?? 0}-${block.block}-${block.callId ?? ''}-${index}`}
           className={
             block.kind === 'reasoning' ? styles.reasoning
               : block.kind === 'tool-args' ? styles.toolArgs

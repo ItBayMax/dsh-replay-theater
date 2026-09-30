@@ -6,15 +6,10 @@
 
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import {
-  buildTimeline,
-  DEFAULT_MAX_GAP_MS,
-  frameIndexAt,
-  stageAt,
-} from '../src/core/timeline.ts'
+import { buildTimeline, DEFAULT_MAX_GAP_MS, frameIndexAt, stageAt, SYNTHETIC_CHUNK_MARKER } from '../src/core/timeline.ts'
 import type { HistoryRecord } from '../src/core/wire.ts'
-import { recordLastSeq } from '../src/core/wire.ts'
-import { reasoningRun, scalar, T0, textRun, toolRun } from './fixtures/synthetic.ts'
+import { assistantEventData, recordLastSeq } from '../src/core/wire.ts'
+import { assistantEvent, reasoningRun, scalar, T0, textRun, toolRun, transient } from './fixtures/synthetic.ts'
 
 describe('buildTimeline', () => {
   it('places the first frame at zero and spaces later frames by their gaps', () => {
@@ -25,17 +20,64 @@ describe('buildTimeline', () => {
     expect(timeline.totalMs).toBe(100)
   })
 
-  it('assigns one frame per member and one sequence per member', () => {
+  it('assigns one frame per member, all sharing the attempt sequence', () => {
+    // Since session format v2 a settled attempt occupies ONE sequence, so every
+    // frame expanded out of its stream carries that same seq. Ordering inside
+    // the attempt comes from stream position, not from arithmetic on seq.
     const timeline = buildTimeline([
       textRun({ seq: 10, time: T0, texts: ['a', 'b', 'c', 'd'], dt: [5, 5, 5] }),
     ])
     expect(timeline.frames).toHaveLength(4)
-    expect(timeline.frames.map(frame => frame.seq)).toEqual([10, 11, 12, 13])
+    expect(timeline.frames.map(frame => frame.seq)).toEqual([10, 10, 10, 10])
+    expect(timeline.frames.map(frame => frame.atMs)).toEqual([0, 5, 10, 15])
+  })
+
+  it('keeps members of one attempt in stream order when a later attempt sorts first', () => {
+    // Concatenated windows may arrive out of order; the seq tiebreak must not
+    // scramble the members of a single attempt.
+    const timeline = buildTimeline([
+      textRun({ seq: 20, time: T0 + 100, texts: ['x', 'y'], dt: [5] }),
+      textRun({ seq: 10, time: T0, texts: ['a', 'b'], dt: [5] }),
+    ])
+    expect(timeline.frames.map(frame => frame.payload.kind === 'text' ? frame.payload.text : '?'))
+      .toEqual(['a', 'b', 'x', 'y'])
+  })
+
+  it('ignores client-only transient frames', () => {
+    // Upstream replaces them atomically with the settled event; replaying both
+    // would play every token twice.
+    const timeline = buildTimeline([
+      transient({ seq: 10, time: T0 }),
+      textRun({ seq: 10, time: T0, texts: ['a', 'b'], dt: [5] }),
+    ])
+    expect(timeline.frames).toHaveLength(2)
+  })
+
+  it('places a non-delta stream member on the marker rail', () => {
+    // Upstream's fourth AssistantStreamRecord variant carries a single chunk the
+    // accumulator never packs (real snapshots use it for block-start). It has no
+    // member strings, so dropping it would silently lose a timing point.
+    const timeline = buildTimeline([
+      assistantEvent({
+        seq: 3,
+        time: T0,
+        stream: [
+          { type: 'chunk', time: T0, chunk: { type: 'block-start', index: 0 } },
+          { type: 'text-chunks', time0: T0 + 10, index: 0, dt: [], texts: ['a'] },
+        ],
+      }),
+    ])
+    expect(timeline.frames).toHaveLength(2)
+    const first = timeline.frames[0]?.payload
+    expect(first?.kind).toBe('marker')
+    expect(first?.kind === 'marker' && first.event.type).toBe(SYNTHETIC_CHUNK_MARKER)
   })
 
   it('clamps a negative gap to zero rather than moving time backwards', () => {
-    // Upstream states a gap may be negative when the wall clock stepped
-    // backwards (chunk-rows.ts:36-37).
+    // A negative gap is still reachable on 0.2.0: `safeGap` is a bare
+    // `next - previous` with no non-negativity check (assistant-stream.ts:94-97),
+    // and `validateRun` only requires safe integers (:510), so a wall clock that
+    // stepped backwards lands a negative gap on the wire intact.
     const timeline = buildTimeline([
       textRun({ seq: 1, time: T0, texts: ['a', 'b', 'c'], dt: [-500, 30] }),
     ])
@@ -154,6 +196,24 @@ describe('buildTimeline', () => {
     ])
     expect(timeline.frames.map(frame => frame.atMs)).toEqual([0, 10, 10])
   })
+
+  it('expands a run as long as the longest one upstream actually records', () => {
+    // 2047 is not arbitrary: it is the largest single run in the upstream
+    // snapshot corpus on 639ed01 (a tool-call run in web/present-svg). Every
+    // other fixture here is a handful of members, so without this the
+    // per-member accumulation is only ever exercised at toy scale.
+    const size = 2047
+    const texts = Array.from({ length: size }, (_, i) => `${i % 10}`)
+    const dt = Array.from({ length: size - 1 }, () => 1)
+    const timeline = buildTimeline([textRun({ seq: 1, time: T0, texts, dt })])
+
+    expect(timeline.frames).toHaveLength(size)
+    expect(timeline.totalMs).toBe(size - 1)
+    // One attempt is one sequence however many members it holds.
+    expect(new Set(timeline.frames.map(frame => frame.seq)).size).toBe(1)
+    // Accumulation must reach the final member, not stop early.
+    expect(stageAt(timeline, size - 1).blocks[0]?.text).toBe(texts.join(''))
+  })
 })
 
 describe('frameIndexAt', () => {
@@ -178,6 +238,40 @@ describe('frameIndexAt', () => {
 })
 
 describe('stageAt', () => {
+  it('does not merge a retried attempt into the abandoned one', () => {
+    // A retried step settles as an `assistant/attempt` (the try that was thrown
+    // away) followed by an `assistant/message`. Both can carry the same turn,
+    // step and block index, so without the sequence in the block identity the
+    // two texts would concatenate and read as one continuous answer.
+    const timeline = buildTimeline([
+      assistantEvent({
+        seq: 5,
+        time: T0,
+        type: 'assistant/attempt',
+        stream: [{ type: 'text-chunks', time0: T0, index: 0, dt: [], texts: ['abandoned'] }],
+      }),
+      assistantEvent({
+        seq: 6,
+        time: T0 + 50,
+        stream: [{ type: 'text-chunks', time0: T0 + 50, index: 0, dt: [], texts: ['final'] }],
+      }),
+    ])
+    const stage = stageAt(timeline, timeline.frames.length - 1)
+    expect(stage.blocks).toHaveLength(2)
+    expect(stage.blocks.map(block => block.text)).toEqual(['abandoned', 'final'])
+    expect(stage.blocks.map(block => block.seq)).toEqual([5, 6])
+  })
+
+  it('still merges consecutive members of one attempt into a single block', () => {
+    const timeline = buildTimeline([
+      textRun({ seq: 9, time: T0, texts: ['Hel', 'lo', '!'], dt: [1, 1] }),
+    ])
+    const stage = stageAt(timeline, timeline.frames.length - 1)
+    expect(stage.blocks).toHaveLength(1)
+    expect(stage.blocks[0]?.text).toBe('Hello!')
+    expect(stage.blocks[0]?.seq).toBe(9)
+  })
+
   it('concatenates consecutive members of one block into one paragraph', () => {
     const timeline = buildTimeline([
       textRun({ seq: 1, time: T0, texts: ['Hel', 'lo ', 'world'], dt: [5, 5] }),
@@ -255,17 +349,19 @@ describe('recordLastSeq', () => {
     expect(recordLastSeq(scalar({ type: 'turn/start', seq: 7, time: T0 }))).toBe(7)
   })
 
-  it('reports the last member sequence of a text run', () => {
-    expect(recordLastSeq(textRun({ seq: 10, time: T0, texts: ['a', 'b', 'c'], dt: [1, 1] }))).toBe(12)
+  it('reports the single sequence of a settled text attempt', () => {
+    // Was `seq + members - 1` before format v2; a settled attempt is now one seq
+    // however many members its stream holds.
+    expect(recordLastSeq(textRun({ seq: 10, time: T0, texts: ['a', 'b', 'c'], dt: [1, 1] }))).toBe(10)
   })
 
-  it('reports the last member sequence of a tool run', () => {
-    expect(recordLastSeq(toolRun({ seq: 4, time: T0, args: ['x', 'y'], dt: [1], id: 'c' }))).toBe(5)
+  it('reports the single sequence of a settled tool attempt', () => {
+    expect(recordLastSeq(toolRun({ seq: 4, time: T0, args: ['x', 'y'], dt: [1], id: 'c' }))).toBe(4)
   })
 })
 
 describe('real upstream shapes', () => {
-  // Derived from snapshots/acp/escalation-approved/session.jsonl at dsh 0a53fb5.
+  // Derived from snapshots/acp/escalation-approved/session.v3.jsonl at dsh 639ed01.
   // The corpus normalizes seq/time away, so the derivation script re-adds them;
   // what this fixture proves is that our wire mirror accepts the record and
   // event SHAPES real sessions produce.
@@ -275,7 +371,8 @@ describe('real upstream shapes', () => {
 
   it('builds a timeline from a real recorded session', () => {
     const timeline = buildTimeline(fixture.records)
-    expect(timeline.frames.length).toBeGreaterThan(fixture.records.length - 1)
+    // Streams expand, so there are strictly more frames than records.
+    expect(timeline.frames.length).toBeGreaterThan(fixture.records.length)
     expect(timeline.totalMs).toBeGreaterThan(0)
   })
 
@@ -287,16 +384,28 @@ describe('real upstream shapes', () => {
     }
   })
 
-  it('keeps frame sequences strictly increasing', () => {
+  it('keeps frame sequences non-decreasing', () => {
+    // Strictly increasing no longer holds: every frame of one settled attempt
+    // shares that attempt's sequence.
     const timeline = buildTimeline(fixture.records)
     for (let i = 1; i < timeline.frames.length; i += 1) {
-      expect(timeline.frames[i]?.seq).toBeGreaterThan(timeline.frames[i - 1]?.seq ?? -1)
+      expect(timeline.frames[i]?.seq).toBeGreaterThanOrEqual(timeline.frames[i - 1]?.seq ?? -1)
     }
   })
 
-  it('exercises both record paths in one fixture', () => {
-    const kinds = new Set(fixture.records.map(record => record.type))
-    expect(kinds).toEqual(new Set(['event', 'chunks']))
+  it('exercises both event paths in one fixture', () => {
+    // Every record is an `event` now; the two paths the builder takes are
+    // "settled assistant event with a stream" and "scalar marker".
+    expect(new Set(fixture.records.map(record => record.type))).toEqual(new Set(['event']))
+    const withStream = fixture.records.filter(record => assistantEventData(record.event) !== undefined)
+    expect(withStream.length).toBeGreaterThan(0)
+    expect(withStream.length).toBeLessThan(fixture.records.length)
+  })
+
+  it('covers every stream member variant upstream emits', () => {
+    const variants = new Set(fixture.records.flatMap(record =>
+      (assistantEventData(record.event)?.stream ?? []).map(member => member.type)))
+    expect(variants).toEqual(new Set(['chunk', 'text-chunks', 'reasoning-chunks', 'tool-call-chunks']))
   })
 
   it('accumulates a stage without throwing on real marker types', () => {

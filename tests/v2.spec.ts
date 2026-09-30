@@ -9,7 +9,24 @@ import { describe, expect, it } from 'vitest'
 import { findDivergence, summarize } from '../src/core/compare.ts'
 import { parseSessionLog } from '../src/core/jsonl.ts'
 import { buildTimeline } from '../src/core/timeline.ts'
+import type { AssistantStreamRun, HistoryRecord } from '../src/core/wire.ts'
+import { assistantEventData } from '../src/core/wire.ts'
 import { reasoningRun, scalar, T0, textRun, toolRun } from './fixtures/synthetic.ts'
+
+/**
+ * Read the first packed run out of a parsed record.
+ *
+ * Since format v2 a settled attempt carries its runs in `data.stream`, so tests
+ * assert through the same accessor the timeline builder uses rather than
+ * reaching into the wire shape by hand.
+ * @param record - one parsed history record.
+ * @returns the first packed run, or undefined when there is none.
+ */
+function firstRun(record: HistoryRecord | undefined): AssistantStreamRun | undefined {
+  if (record === undefined || record.type !== 'event') return undefined
+  const member = assistantEventData(record.event)?.stream[0]
+  return member === undefined || member.type === 'chunk' ? undefined : member
+}
 
 describe('parseSessionLog', () => {
   it('reads scalar lines into event records', () => {
@@ -23,30 +40,30 @@ describe('parseSessionLog', () => {
     expect(parsed.synthesizedTimes).toBe(false)
   })
 
-  it('lifts a packed text row from storage form into wire form', () => {
-    // Storage form is `text-chunks`; wire form is `chunks` + `chunkrow/text-chunks`.
+  it('lifts a generation-0 packed text row into the current shape', () => {
+    // Generation 0 stored one packed row per run; since format v2 the run lives
+    // inside a settled assistant event's `data.stream`.
     const log = '{"type":"text-chunks","seq":5,"time":2000,"data":{"turn":1,"step":1,"index":0,"dt":[10,20],"texts":["a","b","c"]}}'
     const parsed = parseSessionLog(log)
     const record = parsed.records[0]
-    expect(record?.type).toBe('chunks')
-    expect(record?.type === 'chunks' && record.event.type).toBe('chunkrow/text-chunks')
-    expect(record?.type === 'chunks' && record.event.data.dt).toEqual([10, 20])
+    expect(record?.type).toBe('event')
+    expect(record?.event.type).toBe('assistant/message')
+    const run = firstRun(record)
+    expect(run?.type).toBe('text-chunks')
+    expect(run?.dt).toEqual([10, 20])
   })
 
   it('lifts a packed tool row and keeps its call identity', () => {
     const log = '{"type":"tool-call-chunks","seq":1,"time":0,"data":{"turn":1,"step":1,"index":0,"dt":[5],"id":"call-7","name":"read","args":["{\\"p\\"","}"]}}'
-    const record = parseSessionLog(log).records[0]
-    expect(record?.type === 'chunks' && record.event.type).toBe('chunkrow/tool-call-chunks')
-    const toolEvent = record?.type === 'chunks' && record.event.type === 'chunkrow/tool-call-chunks'
-      ? record.event
-      : undefined
-    expect(toolEvent?.data.id).toBe('call-7')
+    const run = firstRun(parseSessionLog(log).records[0])
+    expect(run?.type).toBe('tool-call-chunks')
+    expect(run !== undefined && run.type === 'tool-call-chunks' ? run.id : undefined).toBe('call-7')
+    expect(run !== undefined && run.type === 'tool-call-chunks' ? run.name : undefined).toBe('read')
   })
 
   it('lifts a reasoning row', () => {
     const log = '{"type":"reasoning-chunks","seq":1,"time":0,"data":{"turn":1,"step":1,"index":0,"dt":[],"texts":["hmm"]}}'
-    const record = parseSessionLog(log).records[0]
-    expect(record?.type === 'chunks' && record.event.type).toBe('chunkrow/reasoning-chunks')
+    expect(firstRun(parseSessionLog(log).records[0])?.type).toBe('reasoning-chunks')
   })
 
   it('synthesizes a clock for a normalized log that has no timestamps', () => {
@@ -108,13 +125,14 @@ describe('parseSessionLog', () => {
 
   it('tolerates non-numeric gaps inside dt', () => {
     const log = '{"type":"text-chunks","data":{"dt":[10,"bad",20],"texts":["a","b","c"]}}'
-    const record = parseSessionLog(log).records[0]
-    expect(record?.type === 'chunks' && record.event.data.dt).toEqual([10, 20])
+    expect(firstRun(parseSessionLog(log).records[0])?.dt).toEqual([10, 20])
   })
 
   it('parses a real recorded session end to end', () => {
+    // Snapshots are versioned on disk now: `session.jsonl` without a suffix
+    // means generation 0 specifically.
     const path = new URL(
-      '../../../deepseek-harness/snapshots/acp/escalation-approved/session.jsonl',
+      '../../../deepseek-harness/snapshots/acp/escalation-approved/session.v3.jsonl',
       import.meta.url,
     )
     const parsed = parseSessionLog(readFileSync(path, 'utf8'))
@@ -156,8 +174,10 @@ describe('findDivergence', () => {
     const result = findDivergence(hello, other)
     expect(result.kind === 'diverged' && result.leftAtMs).toBe(10)
     expect(result.kind === 'diverged' && result.rightAtMs).toBe(70)
-    expect(result.kind === 'diverged' && result.leftSeq).toBe(2)
-    expect(result.kind === 'diverged' && result.rightSeq).toBe(51)
+    // Seek coordinates are attempt-grained since format v2: both frames carry
+    // their attempt's sequence rather than a per-member one.
+    expect(result.kind === 'diverged' && result.leftSeq).toBe(1)
+    expect(result.kind === 'diverged' && result.rightSeq).toBe(50)
   })
 
   it('detects a payload-kind change', () => {
@@ -240,13 +260,15 @@ describe('real production storage format', () => {
   // their coordinates `seq0`/`time0`, and the first line is a SessionHeader
   // that must not consume a sequence. Reading the source alone did not reveal
   // either — the wire type uses `seq`/`time`, the storage type does not.
-  it('reads seq0/time0 from a packed storage row', () => {
+  it('reads seq0/time0 from a generation-0 packed row', () => {
     const log = '{"type":"text-chunks","seq0":42,"time0":1700,"data":{"turn":1,"step":1,"index":0,"dt":[7],"texts":["a","b"]}}'
     const parsed = parseSessionLog(log)
     expect(parsed.synthesizedTimes).toBe(false)
     const record = parsed.records[0]
-    expect(record?.type === 'chunks' && record.event.seq).toBe(42)
-    expect(record?.type === 'chunks' && record.event.time).toBe(1700)
+    expect(record?.event.seq).toBe(42)
+    expect(record?.event.time).toBe(1700)
+    // The run keeps the same coordinate as `time0` inside the lifted stream.
+    expect(firstRun(record)?.time0).toBe(1700)
   })
 
   it('keeps the SessionHeader out of records and out of the sequence space', () => {
