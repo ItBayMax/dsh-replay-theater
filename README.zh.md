@@ -5,6 +5,14 @@
 
 [English](README.md) | 中文
 
+> [!WARNING]
+> **尚不兼容 dsh 0.2.0。** 本插件消费的 `chunkrow/*` 事件已被上游移除：v1→v2 的会话格式迁移把流折叠进了
+> `assistant/message.data.stream[]`，且从格式 v2 起每个物理行只存一个事件。立论依然成立——
+> `time0` / `index` / `dt` / `texts` 字段名未变、逐 token 间隔仍被完整保留——但读取端需要移植。
+> 在 **0.1.2-alpha.2** 上可用。详情见
+> [discussion #5270](https://github.com/deepseek-ai/deepseek-harness/discussions/5270)。
+
+
 **按原始 token 节奏重演一次 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 会话**——站内播放剧场，支持播放、暂停、单步、倍速、拖拽跳转。
 
 不是静态时间线：助手的回答一个 token 一个 token 地长出来，间隔就是当时生成时记录的真实毫秒数。

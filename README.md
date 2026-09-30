@@ -5,6 +5,15 @@
 
 English | [中文](README.zh.md)
 
+> [!WARNING]
+> **Not compatible with dsh 0.2.0 yet.** The `chunkrow/*` events this plugin consumes were removed
+> upstream: the v1→v2 session-format edge folds the stream into `assistant/message.data.stream[]`,
+> and from format v2 on each physical row holds exactly one event. The premise still holds —
+> `time0` / `index` / `dt` / `texts` kept their names and the per-token gaps are still preserved —
+> but the reader needs porting. Works on **0.1.2-alpha.2**. Details:
+> [discussion #5270](https://github.com/deepseek-ai/deepseek-harness/discussions/5270).
+
+
 **Replay a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) session at its original token cadence** — an in-app playback theater with play, pause, single-step, speed and seek.
 
 Not a static timeline: the assistant's answer grows token by token, spaced by the real millisecond gaps recorded when it was generated.
