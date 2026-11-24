@@ -92,7 +92,25 @@ Everything the browser's session window holds: assistant text, reasoning, and to
 
 ## Compatibility
 
-Developed against **dsh `0.2.0-rc.2`** (upstream commit `639ed01`). It reads only the public client surface — `session.eventSource` and `session.loadOlder()` — because upstream removes whole client packages between minor versions; depending on internals is not survivable.
+Developed against **dsh `0.2.0-rc.2`** (upstream commit `639ed01`) and re-verified against every release since. It reads only the public client surface — `session.eventSource` and `session.loadOlder()` — because upstream removes whole client packages between minor versions; depending on internals is not survivable.
+
+| dsh | Checked | Result |
+|---|---|---|
+| `0.2.0-rc.2` (`639ed01`) | development baseline | — |
+| `0.2.1-rc.2` (`687f282`) | 2026-10-22 | no change needed |
+| **`0.2.3-alpha.2` (`4b399c3`)** | **2026-11-24** | **no change needed** |
+
+What each re-check measures, and what it found on `0.2.3-alpha.2`:
+
+- `SessionEventLikeEntry` — `git diff 687f282..4b399c3` on `contract/events.ts` is **empty**.
+- `AssistantStreamRecord` — the only change is an import merge: two import lines became one, because `ToolCallId` is now taken from the `types.ts` re-export. The four variants are **byte-identical**.
+- `SESSION_FORMAT_VERSION` is still **4**; the migration chain is still v0→v4.
+- The slots and services this plugin registers against — `conversation.view`, `sidebarRightTabs`, `sidebar.right.pane.tab`, `eventSource`, `loadOlder` — and all three packages in `dsh.client.inject` still exist.
+- `engines.dsh: "^0.2.0-rc.2"` admits `0.2.3-alpha.2`.
+
+**Tolerating unknown event types is doing real work.** Upstream keeps the format version at 4 while growing the event vocabulary, and several of those additions are *required on read*: upstream's own older readers **refuse** a log that carries one. Between `0.2.1-rc.2` and `0.2.3-alpha.2` upstream landed 15 persistence changes, and **5 of them** state that a reader predating the event refuses the whole log. This reader places an event type it does not recognise on the marker rail instead of rejecting the log, so a newer log still replays — a property worth keeping on purpose rather than by accident.
+
+> **Scope of these checks.** They are static: upstream source, type diffs and registry lookups. The plugin has not been installed into a `0.2.3` instance or run against one. A behavioural break that leaves these shapes intact would not be caught here.
 
 **Reads both on-disk generations.** A settled attempt is one `assistant/message` / `assistant/attempt` carrying its packed runs in `data.stream` (format v2 and later, current is v4). Generation-0 logs — the ones named `session.jsonl` with no version suffix — stored one packed row per run instead; the offline parser lifts those into the current shape, so old files still replay.
 

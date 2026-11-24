@@ -92,7 +92,25 @@ dsh plugin --profile web add "github:ItBayMax/dsh-replay-theater#main"
 
 ## 兼容性
 
-针对 **dsh `0.2.0-rc.2`**（上游 commit `639ed01`）开发。只读公开客户端面——`session.eventSource` 与 `session.loadOlder()`——因为上游会在小版本之间整包删除客户端代码，依赖内部实现活不长。
+针对 **dsh `0.2.0-rc.2`**（上游 commit `639ed01`）开发，此后每个版本都重新核验过。只读公开客户端面——`session.eventSource` 与 `session.loadOlder()`——因为上游会在小版本之间整包删除客户端代码，依赖内部实现活不长。
+
+| dsh | 核验时间 | 结果 |
+|---|---|---|
+| `0.2.0-rc.2`（`639ed01`） | 开发基线 | — |
+| `0.2.1-rc.2`（`687f282`） | 2026-10-22 | 无需改动 |
+| **`0.2.3-alpha.2`（`4b399c3`）** | **2026-11-24** | **无需改动** |
+
+每次重核查的是什么，以及在 `0.2.3-alpha.2` 上的结果：
+
+- `SessionEventLikeEntry`——对 `contract/events.ts` 跑 `git diff 687f282..4b399c3`，**零输出**。
+- `AssistantStreamRecord`——唯一的改动是 import 合并：两行 import 并成一行，因为 `ToolCallId` 改从 `types.ts` 的再导出取。四个变体**逐字未变**。
+- `SESSION_FORMAT_VERSION` 仍是 **4**，迁移链仍是 v0→v4。
+- 本插件注册所依赖的插槽与服务——`conversation.view`、`sidebarRightTabs`、`sidebar.right.pane.tab`、`eventSource`、`loadOlder`——以及 `dsh.client.inject` 里的三个包，全部仍然存在。
+- `engines.dsh: "^0.2.0-rc.2"` 接受 `0.2.3-alpha.2`。
+
+**对未知事件类型保持宽容，是在做实事。** 上游把格式版本停在 4，同时持续扩张事件词汇表，其中若干新增是 *required on read*——上游自己的旧读取器遇到就**拒绝整个日志**。仅 `0.2.1-rc.2` 到 `0.2.3-alpha.2` 之间，上游就落地了 15 条持久化变更，其中 **5 条**明写旧读取器会拒绝整个日志。本读取器遇到不认识的事件类型时，把它放到标记轨上而不是拒绝日志，所以更新的日志照样能回放——这个性质值得**刻意保留**，而不是碰巧对。
+
+> **本节核验的边界。** 这些都是静态核验：上游源码、类型 diff、注册表查找。插件**没有**被装进 `0.2.3` 实例、也没有在上面跑过。一个不改变上述形状的行为变更，这里是查不出来的。
 
 **两代磁盘格式都能读**。落定的 attempt 是一条 `assistant/message` / `assistant/attempt`，打包 run 放在 `data.stream` 里（格式 v2 及以后，当前是 v4）。generation 0 的日志——文件名是不带版本后缀的 `session.jsonl`——则是一个 run 一个打包行；离线解析器会把它提升成当前形状，所以旧文件照样能回放。
 
